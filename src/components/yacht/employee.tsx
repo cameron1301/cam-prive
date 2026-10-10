@@ -34,7 +34,7 @@ const RULES = [
   "Negligent or intentional damage can mean reimbursement and loss of future use.",
 ];
 
-const HERO = "/yacht/approved/01_HERO_EXTERIOR_APPROVED.png";
+const HERO = "/yacht/approved/01_HERO_EXTERIOR_APPROVED.png?v=2";
 
 export function EmployeeHome() {
   const { data, me, today } = useYacht();
@@ -111,7 +111,7 @@ export function EmployeeHome() {
           <div id="features" className="grid grid-cols-2 gap-3 lg:grid-cols-3 lg:gap-5">
             <Card title="Upper command bridge" body="Curved seating and the center helm. The best seat on the bay." image="/yacht/approved/02_COMMAND_BRIDGE_APPROVED.png" />
             <Card title="Cockpit" body="Chairs at the stern, beside the door into the cabin." image="/yacht/approved/03_COCKPIT_APPROVED.png" />
-            <Card title="Exterior view" body="A short look at the boat, still tied at Dock 5, Slip 36. Press play." image="/yacht/approved/04_EXTERIOR_GALLERY_APPROVED.png" video="/yacht/exterior.mp4" wide />
+            <Card title="Exterior view" body="A short look at the boat, still tied at Dock 5, Slip 36. Press play." image="/yacht/approved/04_EXTERIOR_GALLERY_APPROVED.png" video="/yacht/exterior.mp4?v=2" wide />
           </div>
           <div id="layout" className="mt-3 grid grid-cols-2 gap-3 lg:mt-5 lg:grid-cols-5 lg:gap-5">
             <Card title="Galley" body="Sink, microwave, refrigerator, and coffee. No cooking aboard." image="/yacht/approved/05_GALLEY_KITCHEN_APPROVED.png" className="lg:col-span-2" />
@@ -570,7 +570,7 @@ export function StayScreen() {
         <>
           <StayTabs tab={tab} setTab={setTab} />
           <article className="card overflow-hidden">
-            <img src="/yacht/hero.jpg" alt="" className="h-40 w-full object-cover" />
+            <img src="/yacht/hero.jpg?v=2" alt="" className="h-40 w-full object-cover" />
             <div className="space-y-3 p-4">
               <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${confirmed ? "bg-ready/15 text-ready" : "bg-brass/30 text-brass-ink"}`}>
                 {visible.status === "confirmed" ? "CONFIRMED" : visible.status === "pending_approval" ? "PENDING" : visible.status.replaceAll("_", " ").toUpperCase()}

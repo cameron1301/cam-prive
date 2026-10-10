@@ -3,7 +3,7 @@ import { GuestLayout, BrandMark } from "@/components/yacht/chrome";
 import { Link } from "@tanstack/react-router";
 import { Menu, X } from "lucide-react";
 
-const HERO = "/yacht/approved/01_HERO_EXTERIOR_APPROVED.png";
+const HERO = "/yacht/approved/01_HERO_EXTERIOR_APPROVED.png?v=2";
 const BRIDGE = "/yacht/approved/02_COMMAND_BRIDGE_APPROVED.png";
 const COCKPIT = "/yacht/approved/03_COCKPIT_APPROVED.png";
 const EXTERIOR = "/yacht/approved/04_EXTERIOR_GALLERY_APPROVED.png";
@@ -61,7 +61,7 @@ function HomeHeader() {
 function HomeHero() {
   return (
     <section className="relative h-[74vh] min-h-[620px] max-h-[820px] overflow-hidden bg-[#07141d] lg:h-[78vh] lg:min-h-[650px]">
-      <img src="/yacht/hero-frame.jpg" alt="The Bay Escape at Sierra Point Harbor" className="absolute inset-0 h-full w-full object-cover object-center" />
+      <img src="/yacht/hero-frame.jpg?v=2" alt="The Bay Escape at Sierra Point Harbor" className="absolute inset-0 h-full w-full object-cover object-center" />
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#07141d]/55 via-[#07141d]/10 via-40% to-transparent" />
       <div className="absolute right-5 bottom-[38px] left-5 max-w-[600px] text-white lg:right-auto lg:bottom-16 lg:left-12">
         <p className="text-[11px] font-semibold tracking-[0.14em] uppercase">CAM Privé</p>
@@ -129,7 +129,7 @@ function HomeShot({ src, title, video = false, className = "", imageClass = "" }
     <figure className={className}>
       <div className={`relative overflow-hidden ${imageClass}`}>
         {video && playing ? (
-          <video src="/yacht/exterior.mp4" poster={src} className={img} controls autoPlay playsInline />
+          <video src="/yacht/exterior.mp4?v=2" poster={src} className={img} controls autoPlay playsInline />
         ) : video ? (
           <button type="button" className="block h-full w-full" aria-label="Play exterior view" onClick={() => setPlaying(true)}>
             <img src={src} alt="" className={img} />
@@ -211,7 +211,7 @@ function HomePlan() {
 function HomeClose() {
   return (
     <section className="relative h-[500px] overflow-hidden bg-[#07141d] lg:h-[600px]">
-      <img src="/yacht/hero-frame.jpg" alt="" className="absolute inset-0 h-full w-full object-cover object-[center_40%]" />
+      <img src="/yacht/hero-frame.jpg?v=2" alt="" className="absolute inset-0 h-full w-full object-cover object-[center_40%]" />
       <div className="absolute inset-0 bg-gradient-to-t from-[#07141d]/70 via-[#07141d]/15 to-transparent" />
       <div className="absolute right-5 bottom-10 left-5 max-w-[600px] text-white lg:bottom-16 lg:left-12">
         <p className="text-[11px] font-semibold tracking-[0.14em] uppercase">The Bay Escape</p>
@@ -314,7 +314,7 @@ function PhotoHero({
   const lines = title.split("\n");
   return (
     <section className="relative h-[70vh] min-h-[520px] max-h-[760px] overflow-hidden bg-[#07141d]">
-      <img src="/yacht/hero-frame.jpg" alt="The Bay Escape at Sierra Point Harbor" className="absolute inset-0 h-full w-full object-cover object-center" />
+      <img src="/yacht/hero-frame.jpg?v=2" alt="The Bay Escape at Sierra Point Harbor" className="absolute inset-0 h-full w-full object-cover object-center" />
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#07141d]/60 via-[#07141d]/10 via-45% to-transparent" />
       <div className="absolute right-5 bottom-10 left-5 max-w-[640px] text-white lg:bottom-16 lg:left-12">
         <p className="text-[11px] font-semibold tracking-[0.14em] uppercase">{eyebrow}</p>
@@ -357,7 +357,7 @@ function Shot({ src, title, video = false, className = "", imageClass = "" }: { 
     <figure className={className}>
       <div className={`relative overflow-hidden ${imageClass}`}>
         {video && playing ? (
-          <video src="/yacht/exterior.mp4" poster={src} className={img} controls autoPlay playsInline />
+          <video src="/yacht/exterior.mp4?v=2" poster={src} className={img} controls autoPlay playsInline />
         ) : video ? (
           <button type="button" className="block h-full w-full" aria-label="Play exterior view" onClick={() => setPlaying(true)}>
             <img src={src} alt="" className={img} />
@@ -501,7 +501,7 @@ function Rules() {
 function Closing() {
   return (
     <section className="relative min-h-[28rem]">
-      <img src="/yacht/hero-frame.jpg" alt="" className="absolute inset-0 h-full w-full object-cover object-center" />
+      <img src="/yacht/hero-frame.jpg?v=2" alt="" className="absolute inset-0 h-full w-full object-cover object-center" />
       <div className="absolute inset-0 bg-[#07141d]/40" />
       <div className="relative flex min-h-[28rem] flex-col justify-end px-5 py-12 lg:px-10">
         <h2 className="max-w-xl text-[35px] text-white lg:text-[48px]">Your weekend is waiting.</h2>

@@ -380,7 +380,7 @@ export function StayScreen() {
                   title={tab === "past" ? "No past stays" : "No upcoming stays"}
                   body="When you're ready for your next escape, we'll be here."
                 />
-                <img src="/yacht/hero-frame.jpg" alt="The Bay Escape" className="mt-8 aspect-[16/10] w-full object-cover" />
+                <img src="/yacht/hero-frame.jpg?v=2" alt="The Bay Escape" className="mt-8 aspect-[16/10] w-full object-cover" />
                 <Link to="/book" className={`${btn} mt-8`}>Check availability</Link>
               </div>
             ) : welcome && tab === "upcoming" && visible.status !== "checked_out" ? (
@@ -605,7 +605,7 @@ function StayHub({
       <div className="lg:grid lg:grid-cols-12 lg:items-start lg:gap-14">
         <div className="lg:col-span-5 lg:sticky lg:top-6">
           <p className="text-[11px] font-semibold tracking-[0.14em] text-[#6d6a64] uppercase">My Stay</p>
-          <img src="/yacht/hero-frame.jpg" alt="The Bay Escape at Sierra Point Harbor" className="mt-4 aspect-[16/10] w-full object-cover" />
+          <img src="/yacht/hero-frame.jpg?v=2" alt="The Bay Escape at Sierra Point Harbor" className="mt-4 aspect-[16/10] w-full object-cover" />
           <div className="mt-4 flex items-baseline justify-between gap-4 border-b border-[#ded9d0] pb-3">
             <p className="text-[14px] text-[#6d6a64]">Reservation</p>
             <p className="text-[16px] font-semibold tracking-wide">{refCode(stay.id)}</p>

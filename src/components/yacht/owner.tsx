@@ -53,7 +53,7 @@ export function OwnerHome() {
                 : "Ready for the next guest. Stays, checkout, and Maria’s cleaning run without you."}
             </p>
           </div>
-          <img src="/yacht/hero.jpg" alt="" className="h-28 w-48 rounded-2xl object-cover" />
+          <img src="/yacht/hero.jpg?v=2" alt="" className="h-28 w-48 rounded-2xl object-cover" />
         </div>
       </section>
 
