@@ -329,12 +329,14 @@ export function BookScreen() {
         className="space-y-5"
         onSubmit={(e) => {
           e.preventDefault();
-          const result = book({ checkIn, nights, adults, accepted: accepted && present });
-          if (!result.ok) {
-            setError(result.error);
-            return;
-          }
-          navigate({ to: "/stay" });
+          void (async () => {
+            const result = await book({ checkIn, nights, adults, accepted: accepted && present });
+            if (!result.ok) {
+              setError(result.error);
+              return;
+            }
+            navigate({ to: "/stay" });
+          })();
         }}
       >
         <div>
@@ -580,9 +582,9 @@ export function StayScreen() {
               <div className="grid grid-cols-2 gap-2">
                 <button type="button" className="btn btn-tide" onClick={() => setPanel("checkin")}>View details</button>
                 {confirmed ? (
-                  <button type="button" className="btn btn-quiet" onClick={() => setNote(cancelStay(visible.id))}>Modify / Cancel</button>
+                  <button type="button" className="btn btn-quiet" onClick={() => void cancelStay(visible.id).then(setNote)}>Modify / Cancel</button>
                 ) : (
-                  <button type="button" className="btn btn-quiet" onClick={() => setNote(cancelStay(visible.id))}>Withdraw</button>
+                  <button type="button" className="btn btn-quiet" onClick={() => void cancelStay(visible.id).then(setNote)}>Withdraw</button>
                 )}
               </div>
             </div>
@@ -714,8 +716,10 @@ export function StayScreen() {
             type="button"
             className="btn btn-tide w-full"
             onClick={() => {
-              const err = submitCheckout(visible.id, { notes, damage, photos });
-              setNote(err ?? "Checkout is in. Maria’s cleaning opens on its own.");
+              void (async () => {
+                const err = await submitCheckout(visible.id, { notes, damage, photos });
+                setNote(err ?? "Checkout is in. Maria’s cleaning opens on its own.");
+              })();
             }}
           >
             <Camera size={18} aria-hidden /> Submit checkout

@@ -488,7 +488,9 @@ export function CleanScreen() {
             <button
               type="button"
               className="btn btn-tide min-h-16 text-lg"
-              onClick={() => setError(finishCleaning(job.id, notes))}
+              onClick={() => {
+                void finishCleaning(job.id, notes).then(setError);
+              }}
             >
               Complete cleaning
             </button>

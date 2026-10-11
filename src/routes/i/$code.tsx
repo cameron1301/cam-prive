@@ -15,8 +15,15 @@ function InviteOpen() {
 
   useEffect(() => {
     if (!ready) return;
-    if (openInvitation(code)) navigate({ to: "/profile", replace: true });
-    else setMissing(true);
+    let live = true;
+    void openInvitation(code).then((ok) => {
+      if (!live) return;
+      if (ok) navigate({ to: "/profile", replace: true });
+      else setMissing(true);
+    });
+    return () => {
+      live = false;
+    };
   }, [ready, code, openInvitation, navigate]);
 
   if (!missing) return <GuestLayout><section className="px-5 py-16" /></GuestLayout>;

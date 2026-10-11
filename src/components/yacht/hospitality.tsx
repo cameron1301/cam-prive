@@ -245,13 +245,15 @@ export function BookScreen() {
                   type="button"
                   className={`${btn} mt-6 w-full`}
                   onClick={() => {
-                    const result = book({ checkIn, nights, adults, accepted });
-                    if (!result.ok) {
-                      setError(result.error);
-                      return;
-                    }
-                    sessionStorage.setItem("cam-reserved", "1");
-                    navigate({ to: "/stay" });
+                    void (async () => {
+                      const result = await book({ checkIn, nights, adults, accepted });
+                      if (!result.ok) {
+                        setError(result.error);
+                        return;
+                      }
+                      sessionStorage.setItem("cam-reserved", "1");
+                      navigate({ to: "/stay" });
+                    })();
                   }}
                 >
                   Reserve your stay
@@ -396,9 +398,11 @@ export function StayScreen() {
                 bring={data.guide.bring}
                 activities={data.guide.activities}
                 help={data.config.emergency}
-                onCancel={() => setNote(cancelStay(visible.id))}
-                onChange={(input) => {
-                  const result = changeStay({ id: visible.id, ...input });
+                onCancel={() => {
+                  void cancelStay(visible.id).then(setNote);
+                }}
+                onChange={async (input) => {
+                  const result = await changeStay({ id: visible.id, ...input });
                   if (!result.ok) return result.error;
                   setNote(null);
                   return null;
@@ -435,7 +439,11 @@ function Reserved({ stay, onView }: { stay: Reservation; onView: () => void }) {
   const out = checkoutDate(stay.checkIn, stay.nights);
   return (
     <section className="mt-10">
-      <PageIntro kicker="The Bay Escape" title="Your Bay Escape is reserved" body="We look forward to welcoming you aboard. Your reservation details and arrival information are ready below." />
+      <PageIntro
+        kicker="The Bay Escape"
+        title={stay.payment === "pending" ? "Payment is still required" : "Your Bay Escape is reserved"}
+        body={stay.payment === "pending" ? "This request is not confirmed. Payment is not set up yet, so the stay will not be held as a confirmed reservation until payment succeeds." : "We look forward to welcoming you aboard. Your reservation details and arrival information are ready below."}
+      />
       <dl className="mt-10 grid gap-6 sm:grid-cols-2">
         {[
           ["Dates", `${pretty(stay.checkIn, false)} — ${pretty(out, false)}`],
@@ -511,7 +519,7 @@ function StayHub({
   activities: Array<{ id: string; title: string; body: string; verified: boolean }>;
   help: string;
   onCancel: () => void;
-  onChange: (input: { checkIn: string; nights: 1 | 2 | 3; adults: number }) => string | null;
+  onChange: (input: { checkIn: string; nights: 1 | 2 | 3; adults: number }) => Promise<string | null>;
   onBring: () => void;
   onCheckout: () => void;
 }) {
@@ -570,7 +578,7 @@ function StayHub({
             ["Privé benefit", benefit],
             ["Amount", amount],
             ["Location", "Sierra Point Harbor, Dock 5, Slip 36"],
-            ["Status", stay.status === "confirmed" ? "Reserved" : stay.status === "checked_out" ? "Stay completed" : "Awaiting a note from us"],
+            ["Status", stay.payment === "pending" ? "Payment required — not confirmed" : stay.status === "confirmed" ? "Reserved" : stay.status === "checked_out" ? "Stay completed" : "Awaiting a note from us"],
           ].map(([k, v]) => (
             <div key={k} className="flex justify-between gap-6 border-t border-[#ded9d0] py-3 text-[15px]">
               <dt className="text-[#6d6a64]">{k}</dt>
@@ -587,8 +595,8 @@ function StayHub({
       <ModifyStay
         stay={stay}
         onBack={() => setView("hub")}
-        onChange={(input) => {
-          const error = onChange(input);
+        onChange={async (input) => {
+          const error = await onChange(input);
           if (!error) setView("hub");
           return error;
         }}
@@ -612,7 +620,7 @@ function StayHub({
           </div>
           <p className="mt-4 text-[15px]">{pretty(stay.checkIn, false)} — {pretty(out, false)}</p>
           <p className="mt-1 text-[12px] font-semibold tracking-[0.12em] text-[#b6a27a] uppercase">
-            {stay.status === "pending_approval" ? "Awaiting a note from us" : stage === "before" ? "Reserved" : stage === "arrival" ? "Arrival day" : stage === "during" ? "During your stay" : stage === "checkout" ? "Checkout day" : "Stay completed"}
+            {stay.payment === "pending" ? "Payment required — not confirmed" : stay.status === "pending_approval" ? "Awaiting a note from us" : stage === "before" ? "Reserved" : stage === "arrival" ? "Arrival day" : stage === "during" ? "During your stay" : stage === "checkout" ? "Checkout day" : "Stay completed"}
           </p>
           <h1 className="mt-1 text-[32px] leading-tight">The Bay Escape</h1>
           <p className="mt-1 text-[15px] text-[#6d6a64]">Sierra Point Harbor<br />Brisbane, California</p>
@@ -688,7 +696,7 @@ function ModifyStay({
 }: {
   stay: Reservation;
   onBack: () => void;
-  onChange: (input: { checkIn: string; nights: 1 | 2 | 3; adults: number }) => string | null;
+  onChange: (input: { checkIn: string; nights: 1 | 2 | 3; adults: number }) => Promise<string | null>;
   onCancel: () => void;
 }) {
   const { data, me, today } = useYacht();
@@ -784,7 +792,7 @@ function ModifyStay({
         disabled={!checkIn || !nights}
         onClick={() => {
           if (!checkIn || !nights) return;
-          setError(onChange({ checkIn, nights, adults }));
+          void onChange({ checkIn, nights, adults }).then((error) => setError(error));
         }}
       >
         Update reservation
@@ -835,7 +843,7 @@ const SHOTS: Array<{ id: PhotoSlot; title: string; body: string }> = [
   { id: "overall", title: "Exterior photo", body: "A look along the yacht as you step ashore." },
 ];
 
-function CheckoutFlow({ submit, onDone }: { submit: (input: { notes: string; damage: string; photos: Record<PhotoSlot, string | null> }) => string | null; onDone: (message: string | null) => void }) {
+function CheckoutFlow({ submit, onDone }: { submit: (input: { notes: string; damage: string; photos: Record<PhotoSlot, string | null> }) => Promise<string | null>; onDone: (message: string | null) => void }) {
   const [step, setStep] = useState(0);
   const [photos, setPhotos] = useState<Record<PhotoSlot, string | null>>({ cabin: null, cockpit: null, bridge: null, overall: null });
   const [notes, setNotes] = useState("");
@@ -843,12 +851,13 @@ function CheckoutFlow({ submit, onDone }: { submit: (input: { notes: string; dam
   const shot = SHOTS[step];
   const finish = () => {
     const next = { ...photos, bridge: photos.cockpit };
-    const err = submit({ notes, damage: "", photos: next });
-    if (err) {
-      setError(err);
-      return;
-    }
-    onDone(null);
+    void submit({ notes, damage: "", photos: next }).then((err) => {
+      if (err) {
+        setError(err);
+        return;
+      }
+      onDone(null);
+    });
   };
   return (
     <section>
