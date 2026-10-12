@@ -1,0 +1,1 @@
+import{t as e}from"./prive-BLPNYEmE.js";var t=e;export{t as component};

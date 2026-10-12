@@ -1,0 +1,1 @@
+import{r as e}from"./useRouter-BOAPZDg1.js";import{n as t}from"./store-B5yhf0Zb.js";import{n,o as r}from"./owner-CHtdMdIe.js";import{n as i}from"./prive-BLPNYEmE.js";var a=e();function o(){let{me:e}=t();return e.role===`owner`||e.role===`admin`?(0,a.jsx)(r,{}):e.role===`cleaner`?(0,a.jsx)(n,{}):(0,a.jsx)(i,{})}export{o as component};

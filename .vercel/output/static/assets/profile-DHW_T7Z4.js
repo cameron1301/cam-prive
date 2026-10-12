@@ -1,0 +1,1 @@
+import{i as e}from"./hospitality-CET-Oa64.js";var t=e;export{t as component};
