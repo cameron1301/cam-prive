@@ -32,6 +32,8 @@ import {
   tipFn,
   toggleCheckFn,
   updateGuestFn,
+  verifyCardFn,
+  decideClaimFn,
   washFn,
 } from "./api";
 
@@ -52,7 +54,9 @@ type Api = {
   setTip: (id: string, tip: "sent" | "skipped") => Promise<void>;
   startCleaning: (jobId: string) => Promise<void>;
   toggleCheck: (jobId: string, step: string) => Promise<void>;
-  finishCleaning: (jobId: string, notes: string) => Promise<string | null>;
+  finishCleaning: (jobId: string, notes: string, issue?: { amount: number; reason: string; evidence?: string }) => Promise<string | null>;
+  verifyCard: (id: string) => Promise<string | null>;
+  decideClaim: (id: string, approve: boolean) => Promise<string | null>;
   reportProblem: (input: { severity: Severity; description: string; photo: string | null; reservationId: string | null }) => Promise<void>;
   resolveIncident: (id: string) => Promise<void>;
   decide: (id: string, approve: boolean) => Promise<void>;
@@ -191,10 +195,20 @@ export function YachtProvider({ children }: { children: ReactNode }) {
         const result = await toggleCheckFn({ data: { jobId, step } });
         if ("data" in result && result.data) take(result);
       },
-      finishCleaning: async (jobId, notes) => {
-        const result = await finishCleanFn({ data: { jobId, notes } });
+      finishCleaning: async (jobId, notes, issue) => {
+        const result = await finishCleanFn({ data: { jobId, notes, issue } });
         if (!result.error && result.data) take(result);
         return result.error;
+      },
+      verifyCard: async (id) => {
+        const result = await verifyCardFn({ data: { id } });
+        if (result.ok) take(result);
+        return result.ok ? null : result.error;
+      },
+      decideClaim: async (id, approve) => {
+        const result = await decideClaimFn({ data: { id, approve } });
+        if ("data" in result && result.data) take(result);
+        return "error" in result ? result.error || null : null;
       },
       reportProblem: async (input) => {
         const result = await reportFn({ data: input });

@@ -155,6 +155,7 @@ export type Reservation = {
   tip: "unset" | "sent" | "skipped";
   entitlementConsumed: boolean;
   complimentaryApplied?: number;
+  deposit?: import("./payments").Deposit;
 };
 
 export type CleaningJob = {
@@ -218,6 +219,12 @@ export type Config = {
   slipMonthly: number;
   maxNights: number;
   horizonDays: number;
+  depositAmount: number;
+  depositLeadHours: number;
+  depositReleaseHours: number;
+  paymentProvider: "helcim";
+  paymentMode: "test" | "live";
+  acceptedMethods: string;
 };
 
 export type Guide = {
@@ -241,6 +248,7 @@ export type Data = {
   sms: SmsNote[];
   config: Config;
   guide: Guide;
+  claims: import("./payments").DepositClaim[];
 };
 
 export function laToday(now = new Date()): string {
@@ -516,7 +524,7 @@ export function statsBetween(data: Data, from: string, to: string, slipMonths: n
       }
     }
     const paidTotal = r.nights - complimentaryCap;
-    if (paidTotal > 0) revenue += Math.round(r.amount * (paidInRange / paidTotal));
+    if (paidTotal > 0 && r.payment === "paid") revenue += Math.round(r.amount * (paidInRange / paidTotal));
   }
   const cleaning = data.expenses
     .filter((e) => e.kind === "cleaning" && e.date >= from && e.date <= to)

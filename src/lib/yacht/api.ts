@@ -70,10 +70,24 @@ export const toggleCheckFn = createServerFn({ method: "POST" })
   });
 
 export const finishCleanFn = createServerFn({ method: "POST" })
-  .validator((input: { jobId: string; notes: string }) => input)
+  .validator((input: { jobId: string; notes: string; issue?: { amount: number; reason: string; evidence?: string } }) => input)
   .handler(async ({ data }) => {
     const ops = await import("./ops.server");
-    return ops.finishCleaning(data.jobId, data.notes);
+    return ops.finishCleaning(data.jobId, data.notes, data.issue);
+  });
+
+export const verifyCardFn = createServerFn({ method: "POST" })
+  .validator((input: { id: string; cardToken?: string; last4?: string; transactionId?: string }) => input)
+  .handler(async ({ data }) => {
+    const ops = await import("./ops.server");
+    return ops.verifyCard(data);
+  });
+
+export const decideClaimFn = createServerFn({ method: "POST" })
+  .validator((input: { id: string; approve: boolean }) => input)
+  .handler(async ({ data }) => {
+    const ops = await import("./ops.server");
+    return ops.decideClaim(data.id, data.approve);
   });
 
 export const reportFn = createServerFn({ method: "POST" })

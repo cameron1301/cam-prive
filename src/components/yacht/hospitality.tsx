@@ -24,6 +24,7 @@ import {
   type Reservation,
 } from "@/lib/yacht/logic";
 import { useYacht } from "@/lib/yacht/store";
+import { blankDeposit, depositDueLabel, HOUSE_RULES, normalizeDeposit, quoteStay } from "@/lib/yacht/payments";
 
 const btn = "inline-flex h-12 items-center justify-center rounded-[2px] bg-[#07141d] px-6 text-[12px] font-semibold tracking-[0.08em] text-white uppercase no-underline";
 const btnQuiet = "inline-flex h-12 items-center justify-center rounded-[2px] border border-[#07141d] px-6 text-[12px] font-semibold tracking-[0.08em] uppercase";
@@ -227,6 +228,7 @@ export function BookScreen() {
                   </div>
                 </dl>
                 <Benefit priced={priced} />
+                <DepositLines stayAmount={priced.amount} checkIn={checkIn} leadHours={data.config.depositLeadHours} depositAmount={data.config.depositAmount} testMode={data.config.paymentMode !== "live"} />
                 {turnover ? <p className="mt-4 text-[14px] leading-relaxed text-[#6d6a64]">Another guest departs that morning. We'll have the yacht ready before your 3:00 PM arrival.</p> : null}
                 <div className="mt-8">
                   <p className="text-[13px] text-[#6d6a64]">Adults aboard</p>
@@ -241,7 +243,13 @@ export function BookScreen() {
                 </div>
                 <label className="mt-6 flex gap-3 text-[15px] leading-relaxed">
                   <input type="checkbox" className="mt-1 size-4" checked={accepted} onChange={(e) => setAccepted(e.target.checked)} />
-                  <span>I'll be aboard for the stay. The Bay Escape is dockside, quiet, and prepared for me.</span>
+                  <span>
+                    I'll be aboard, and I agree to the house agreements.
+                    <span className="mt-2 block text-[14px] leading-relaxed text-[#6d6a64]">A quiet stay, kept easy for you and the next guest.</span>
+                    <ul className="mt-2 space-y-1 text-[14px] leading-relaxed text-[#6d6a64]">
+                      {HOUSE_RULES.map((rule) => <li key={rule}>{rule}</li>)}
+                    </ul>
+                  </span>
                 </label>
                 <button
                   type="button"
@@ -313,6 +321,37 @@ function Benefit({ priced }: { priced: ReturnType<typeof priceStay> }) {
           <dd className="font-display text-[36px] leading-none">{money(priced.amount)}</dd>
         </div>
       </dl>
+    </div>
+  );
+}
+
+function DepositLines({ stayAmount, checkIn, leadHours, depositAmount, testMode }: { stayAmount: number; checkIn: string; leadHours: number; depositAmount: number; testMode: boolean }) {
+  const deposit = blankDeposit(depositAmount, "test");
+  const quote = quoteStay(stayAmount, stayAmount > 0 ? "pending" : "not_required", deposit);
+  return (
+    <div className="mt-6">
+      <dl className="space-y-3 text-[15px]">
+        <div className="flex justify-between gap-4 border-t border-[#ded9d0] pt-3">
+          <dt>Stay total</dt>
+          <dd>{money(quote.stayTotal)}</dd>
+        </div>
+        <div className="flex justify-between gap-4 border-t border-[#ded9d0] pt-3">
+          <dt>Refundable security hold</dt>
+          <dd>{money(quote.securityHold)}</dd>
+        </div>
+        <div className="flex justify-between gap-4 border-t border-[#ded9d0] pt-3">
+          <dt>Amount charged today</dt>
+          <dd>{money(quote.chargedToday)}</dd>
+        </div>
+        <div className="flex justify-between gap-4 border-t border-[#ded9d0] pt-3">
+          <dt>Amount temporarily authorized before arrival</dt>
+          <dd>{money(depositAmount)}</dd>
+        </div>
+      </dl>
+      <p className="mt-4 text-[14px] leading-relaxed text-[#6d6a64]">
+        A refundable {money(depositAmount)} security authorization is required before arrival. This is not a charge. The hold is placed {depositDueLabel(checkIn, leadHours).toLowerCase()} and released after checkout and inspection if nothing is owed. Your bank decides when the held funds are available again.
+        {testMode ? " Payments are in test mode, so nothing is sent to a bank today." : ""}
+      </p>
     </div>
   );
 }
@@ -444,7 +483,7 @@ function Reserved({ stay, onView }: { stay: Reservation; onView: () => void }) {
       <PageIntro
         kicker="The Bay Escape"
         title={stay.payment === "pending" ? "Payment is still required" : "Your Bay Escape is reserved"}
-        body={stay.payment === "pending" ? "This request is not confirmed. Payment is not set up yet, so the stay will not be held as a confirmed reservation until payment succeeds." : "We look forward to welcoming you aboard. Your reservation details and arrival information are ready below."}
+        body={stay.payment === "pending" ? "This request is not confirmed. The stay charge has not been collected, so these dates are not held as a paid reservation." : "We look forward to welcoming you aboard. Your reservation details and arrival information are ready below."}
       />
       <dl className="mt-10 grid gap-6 sm:grid-cols-2">
         {[
@@ -660,6 +699,7 @@ function StayHub({
           {note ? <p className="mt-4 text-[15px] text-[#6d6a64]">{note}</p> : null}
         </div>
         <div id="stay-details" className="mt-10 lg:col-span-7 lg:mt-0">
+          <SecurityHold stay={stay} />
           <InfoRow icon={<MapPin size={18} />} title="Getting here" body="Sierra Point Harbor, Brisbane, California." action={<a className="mt-2 inline-block text-[14px] underline underline-offset-4" href="https://maps.google.com/?q=Sierra+Point+Harbor+Brisbane+California" target="_blank" rel="noreferrer">Get directions</a>} />
           <InfoRow icon={<Car size={18} />} title="Parking" body={parkingNote ?? "Parking details have not been added yet. They will be shared with your invitation before you arrive."} />
           <InfoRow icon={<KeyRound size={18} />} title="Marina access" body={accessNote ?? "Instructions for reaching Dock 5, Slip 36 will be shared with your invitation before you arrive."} />
@@ -674,6 +714,48 @@ function StayHub({
         </div>
       </div>
     </article>
+  );
+}
+
+function SecurityHold({ stay }: { stay: Reservation }) {
+  const { data, verifyCard } = useYacht();
+  const [message, setMessage] = useState<string | null>(null);
+  const deposit = normalizeDeposit(stay.deposit, data.config.depositAmount || 250, stay.status);
+  const quote = quoteStay(stay.amount, stay.payment, deposit);
+  const when = depositDueLabel(stay.checkIn, data.config.depositLeadHours || 24);
+  return (
+    <section className="mb-8 border-t border-[#ded9d0] pt-5">
+      <p className="text-[11px] font-semibold tracking-[0.14em] text-[#6d6a64] uppercase">Payment</p>
+      <dl className="mt-3 space-y-3 text-[15px]">
+        <div className="flex justify-between gap-4"><dt className="text-[#6d6a64]">Stay total</dt><dd>{money(quote.stayTotal)}</dd></div>
+        <div className="flex justify-between gap-4"><dt className="text-[#6d6a64]">Refundable security hold</dt><dd>{money(quote.securityHold)}</dd></div>
+        <div className="flex justify-between gap-4"><dt className="text-[#6d6a64]">Amount charged today</dt><dd>{money(quote.chargedToday)}</dd></div>
+        <div className="flex justify-between gap-4"><dt className="text-[#6d6a64]">Amount temporarily authorized before arrival</dt><dd>{money(quote.authorizedNow)}</dd></div>
+      </dl>
+      <p className="mt-3 text-[14px] leading-relaxed text-[#6d6a64]">
+        A refundable {money(quote.securityHold)} security authorization is required before arrival. This is not a charge. The hold is released following checkout and inspection, provided there are no outstanding charges. Your bank decides when those funds are available again.
+        {quote.testMode ? " Test mode is on, so no card is charged and no bank hold is placed." : ""}
+        {deposit.status === "unverified" ? ` Card verification is still needed. The hold is scheduled ${when.toLowerCase()}.` : ""}
+        {deposit.status === "verified" ? ` Your payment method is verified. The hold is scheduled ${when.toLowerCase()}. Arrival details stay private until that hold succeeds.` : ""}
+        {deposit.status === "authorized" ? " A test hold is recorded. Arrival details are available." : ""}
+        {deposit.status === "failed" ? " The hold did not succeed. Please verify another card. Arrival details stay closed." : ""}
+        {deposit.status === "expired" ? " The earlier hold expired and is not treated as valid." : ""}
+        {deposit.status === "released" ? " The security hold has been released." : ""}
+        {deposit.status === "captured" ? ` ${money(deposit.capturedAmount)} was kept for a documented charge. Anything not captured is not kept, and your bank decides when an unused hold disappears.` : ""}
+      </p>
+      {deposit.status === "unverified" || deposit.status === "failed" ? (
+        <button
+          type="button"
+          className={`${btn} mt-4`}
+          onClick={() => {
+            void verifyCard(stay.id).then((error) => setMessage(error || (quote.testMode ? "Payment method verified in test mode. Nothing was sent to a bank." : "Payment method verified.")));
+          }}
+        >
+          Verify payment method
+        </button>
+      ) : null}
+      {message ? <p className="mt-3 text-[14px] text-[#6d6a64]">{message}</p> : null}
+    </section>
   );
 }
 
@@ -801,7 +883,7 @@ function ModifyStay({
       </button>
       <div className="mt-10 border-t border-[#ded9d0] pt-6">
         <h2 className="text-[24px]">Plans change</h2>
-        <p className="mt-2 text-[15px] leading-relaxed text-[#6d6a64]">If you need to adjust your stay, please let us know at least 48 hours before arrival whenever possible. With that notice, a complimentary night is restored. Inside 48 hours, it stays with the visit. Payment is not collected here, so no refund is promised.</p>
+        <p className="mt-2 text-[15px] leading-relaxed text-[#6d6a64]">If you need to adjust your stay, please let us know at least 48 hours before arrival whenever possible. With that notice, a complimentary night is restored. Inside 48 hours, it stays with the visit. A stay charge, once collected, is refunded when you cancel. A security hold that has not been captured is released. Test mode does not collect either one.</p>
         {plans ? (
           <button type="button" className={`${btnQuiet} mt-5`} onClick={onCancel}>Cancel this reservation</button>
         ) : (

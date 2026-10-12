@@ -274,7 +274,14 @@ export function createSeed(today = laToday()): Data {
       slipMonthly: 400,
       maxNights: 3,
       horizonDays: 30,
+      depositAmount: 250,
+      depositLeadHours: 24,
+      depositReleaseHours: 24,
+      paymentProvider: "helcim",
+      paymentMode: "test",
+      acceptedMethods: "Credit and debit cards",
     },
     guide,
+    claims: [],
   };
 }

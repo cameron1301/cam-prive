@@ -27,7 +27,7 @@ import { useYacht } from "@/lib/yacht/store";
 import { PhotoPick } from "./bits";
 
 export function OwnerHome() {
-  const { data, today, decide, resolveIncident } = useYacht();
+  const { data, today, decide, resolveIncident, decideClaim } = useYacht();
   const status = yachtStatus(data, today);
   const next = nextReservation(data, today);
   const exceptions = ownerExceptions(data, today);
@@ -68,6 +68,25 @@ export function OwnerHome() {
         </section>
       ) : null}
 
+      {(data.claims || []).filter((claim) => claim.status === "pending_owner").map((claim) => {
+        const stay = data.reservations.find((item) => item.id === claim.reservationId);
+        return (
+          <section key={claim.id} className="card p-5">
+            <p className="kicker">Security hold review</p>
+            <h2 className="mt-2 text-3xl">{money(claim.amount)}</h2>
+            <p className="mt-2">{claim.reason}</p>
+            {claim.evidence?.startsWith("data:image/") ? <img src={claim.evidence} alt="Inspection evidence" className="mt-3 max-h-48 rounded-2xl object-cover" /> : <p className="mt-2 text-sm text-muted">No inspection photo was attached.</p>}
+            <p className="text-sm text-muted">
+              {stay ? `${personName(data, stay.managerId)} · hold ${stay.deposit?.status || "unknown"}` : "Stay not found."} This is not stay revenue. Declining releases the hold. Approving captures only this amount.
+            </p>
+            <div className="mt-4 flex gap-2">
+              <button type="button" className="btn btn-tide" onClick={() => decideClaim(claim.id, true)}>Approve capture</button>
+              <button type="button" className="btn btn-quiet" onClick={() => decideClaim(claim.id, false)}>Release hold</button>
+            </div>
+          </section>
+        );
+      })}
+
       {pending.map((r) => (
         <section key={r.id} className="card p-5">
           <p className="kicker">Additional booking</p>
@@ -75,7 +94,7 @@ export function OwnerHome() {
           <p>
             {pretty(r.checkIn, false)} → {pretty(checkoutDate(r.checkIn, r.nights), false)} · {r.nights} nights · {money(r.amount)}
           </p>
-          <p className="text-sm text-muted">{r.adults} adults. Payment is marked pending until you connect a processor. Approving does not charge anyone.</p>
+          <p className="text-sm text-muted">The stay charge is separate from the $250 security hold. Approving here does not capture a deposit or mark a card payment as received.</p>
           <div className="mt-4 flex gap-2">
             <button type="button" className="btn btn-tide" onClick={() => decide(r.id, true)}>Approve</button>
             <button type="button" className="btn btn-quiet" onClick={() => decide(r.id, false)}>Decline</button>
@@ -233,6 +252,11 @@ export function AdminBookings() {
           </p>
           <p className="text-sm text-muted">
             Rules {r.rulesVersion ?? "—"} {r.rulesAcceptedAt ? `accepted ${r.rulesAcceptedAt.slice(0, 16).replace("T", " ")}` : ""}
+          </p>
+          <p className="text-sm text-muted">
+            Stay payment {r.payment}. Security hold {r.deposit?.status || "unverified"}
+            {r.deposit?.status === "captured" ? ` · kept ${money(r.deposit.capturedAmount)}` : ""}
+            {r.deposit?.last4 ? ` · card ending ${r.deposit.last4}` : ""}
           </p>
           {r.checkout ? <p className="mt-2 text-sm">Checkout notes: {r.checkout.notes || "None."} {r.checkout.damage ? `Damage: ${r.checkout.damage}` : ""}</p> : null}
           {r.checkout ? (
@@ -424,6 +448,8 @@ export function CleanScreen() {
   const [severity, setSeverity] = useState<Severity>("minor");
   const [photo, setPhoto] = useState<string | null>(null);
   const [shots, setShots] = useState<Partial<Record<PhotoSlot, string>>>({});
+  const [issueOn, setIssueOn] = useState(false);
+  const [issueAmount, setIssueAmount] = useState("250");
   const stay = job ? data.reservations.find((r) => r.id === job.reservationId) : undefined;
   const sms = data.sms[0];
   const turnovers = upcomingTurnoverDates(data, today);
@@ -485,11 +511,26 @@ export function CleanScreen() {
             >
               Report problem
             </button>
+            <label className="card block p-4 text-sm">
+              <span className="flex items-start gap-3">
+                <input type="checkbox" className="mt-1" checked={issueOn} onChange={(e) => setIssueOn(e.target.checked)} />
+                <span>Inspection found damage, excessive cleaning, missing property, or a rule issue. The owner must approve before any of the security hold is kept.</span>
+              </span>
+              {issueOn ? (
+                <input className="field mt-3" inputMode="decimal" value={issueAmount} onChange={(e) => setIssueAmount(e.target.value)} aria-label="Amount to review" />
+              ) : null}
+            </label>
             <button
               type="button"
               className="btn btn-tide min-h-16 text-lg"
               onClick={() => {
-                void finishCleaning(job.id, notes).then(setError);
+                const amount = Number(issueAmount);
+                const evidence = photo || Object.values(shots).find(Boolean) || "";
+                void finishCleaning(
+                  job.id,
+                  notes,
+                  issueOn ? { amount: Number.isFinite(amount) ? amount : 0, reason: notes.trim() || problem.trim() || "Inspection found an issue.", evidence } : undefined,
+                ).then(setError);
               }}
             >
               Complete cleaning
@@ -637,8 +678,15 @@ export function SettingsScreen() {
         {field("emergency", "Emergency contact")}
         {field("zelle", "Tip instructions")}
         {field("nightlyRate", "Extra night price")}
+        {field("depositAmount", "Refundable security hold")}
+        {field("depositLeadHours", "Hours before check-in to authorize the hold")}
+        {field("depositReleaseHours", "Hours after a clear inspection to release the hold")}
+        {field("acceptedMethods", "Accepted payment methods")}
         {field("cleaningCost", "Cleaning cost")}
         {field("slipMonthly", "Monthly slip fee")}
+        <p className="text-sm text-muted">
+          Processor: Helcim, test mode. Live charging stays off until a Helcim API token is set on the server. The token is never stored in CAM Privé and never shown here. Card numbers are not collected in this app.
+        </p>
       </form>
       <form className="card space-y-4 p-5" onSubmit={(e) => e.preventDefault()}>
         <h2 className="text-2xl">Guide copy</h2>

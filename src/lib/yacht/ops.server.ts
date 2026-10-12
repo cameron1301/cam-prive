@@ -20,6 +20,22 @@ import {
   type Role,
   type Severity,
 } from "./logic";
+import {
+  applySweep,
+  arrivalUnlocked,
+  blankDeposit,
+  holdIsDue,
+  markAuthorized,
+  markCaptured,
+  markFailed,
+  markReleased,
+  markVerified,
+  normalizeDeposit,
+  normalizePaymentConfig,
+  publicDeposit,
+  scheduleRelease,
+} from "./payments";
+import { helcimCapture, helcimConfigured, helcimPreauth, helcimPurchase, helcimRefund, helcimVoid } from "./helcim.server";
 
 const COOKIE = "cam_prive_session";
 
@@ -32,8 +48,12 @@ function hashToken(token: string) {
 function parseData(raw: unknown): Data {
   const data = (typeof raw === "string" ? JSON.parse(raw) : raw) as Data;
   data.people = (data.people || []).map((p) => normalizePerson(p));
-  if (!data.config) data.config = createSeed().config;
-  if (data.config.maxNights < 3) data.config.maxNights = 3;
+  data.config = normalizePaymentConfig({ ...createSeed().config, ...(data.config || {}) });
+  data.claims = data.claims || [];
+  data.reservations = (data.reservations || []).map((stay) => ({
+    ...stay,
+    deposit: normalizeDeposit(stay.deposit, data.config.depositAmount, stay.status),
+  }));
   return data;
 }
 
@@ -160,6 +180,17 @@ function redactStay(stay: Reservation): Reservation {
   };
 }
 
+function scrubStay(stay: Reservation): Reservation {
+  return stay.deposit ? { ...stay, deposit: publicDeposit(stay.deposit) } : stay;
+}
+
+function guestCanSeeArrival(data: Data, personId: string): boolean {
+  const open = data.reservations.filter(
+    (stay) => stay.managerId === personId && (stay.status === "confirmed" || stay.status === "pending_approval"),
+  );
+  return open.length > 0 && open.every((stay) => !!stay.deposit && arrivalUnlocked(stay.deposit));
+}
+
 function publicConfig(data: Data): Data["config"] {
   return {
     ...data.config,
@@ -172,6 +203,10 @@ function publicConfig(data: Data): Data["config"] {
     cleaningCost: 0,
     slipMonthly: 0,
   };
+}
+
+function forClient(data: Data): Data {
+  return { ...data, reservations: data.reservations.map(scrubStay) };
 }
 
 export function present(data: Data, session: Session | null) {
@@ -198,22 +233,22 @@ export function present(data: Data, session: Session | null) {
     };
   }
   if (privileged) {
-    return { data, me: view, actorRole };
+    return { data: forClient(data), me: view, actorRole };
   }
   if (actor.role === "cleaner") {
     return {
-      data: {
+      data: forClient({
         ...data,
         people: data.people.map((p) => ({ ...p, email: "", phone: "", notes: "", inviteCode: p.id === actor.id ? p.inviteCode : "" })),
         expenses: [],
         audit: [],
         config: { ...data.config, zelle: "", slipMonthly: 0 },
-      },
+      }),
       me: actor,
       actorRole,
     };
   }
-  const mine = data.reservations.filter((r) => r.managerId === actor.id);
+  const mine = data.reservations.filter((r) => r.managerId === actor.id).map(scrubStay);
   const others = data.reservations.filter((r) => r.managerId !== actor.id).map(redactStay);
   return {
     data: {
@@ -227,7 +262,10 @@ export function present(data: Data, session: Session | null) {
       sms: [],
       maintenance: [],
       blackouts: data.blackouts.map((b) => ({ ...b, reason: "Held" })),
-      config: { ...data.config, zelle: "", cleaningCost: 0, slipMonthly: 0 },
+      claims: (data.claims || []).filter((claim) => mine.some((stay) => stay.id === claim.reservationId)),
+      config: guestCanSeeArrival(data, actor.id)
+        ? { ...data.config, zelle: "", cleaningCost: 0, slipMonthly: 0 }
+        : publicConfig(data),
     },
     me: actor,
     actorRole,
@@ -253,7 +291,54 @@ function deny() {
   return { error: "This invitation can't do that." };
 }
 
+async function persistSweep() {
+  const current = await readState();
+  const swept = applySweep(current, Date.now());
+  let next = swept.data;
+  if (next.config.paymentMode === "live" && helcimConfigured()) {
+    next = await placeLiveHolds(next);
+    next = await releaseLiveHolds(next);
+  }
+  const changed = swept.changed || next !== swept.data;
+  if (!changed) return;
+  const noted = swept.notes.reduce((data, note) => audit(data, "Payments", note), next);
+  await writeState(noted, versionOf(current));
+}
+
+async function placeLiveHolds(data: Data): Promise<Data> {
+  let reservations = data.reservations;
+  for (const stay of data.reservations) {
+    const deposit = normalizeDeposit(stay.deposit, data.config.depositAmount, stay.status);
+    if (!holdIsDue(stay, deposit, data.config.depositLeadHours) || deposit.mode !== "live") continue;
+    const result = await helcimPreauth(deposit.amount, deposit.tokenRef, `preauth-${stay.id}-${deposit.verifyId}`, "0.0.0.0");
+    reservations = reservations.map((item) => {
+      if (item.id !== stay.id) return item;
+      return { ...item, deposit: result.ok ? markAuthorized(deposit, result.transactionId) : markFailed(deposit) };
+    });
+  }
+  return reservations === data.reservations ? data : { ...data, reservations };
+}
+
+/** Ask Helcim to reverse a hold that is due. If Helcim refuses, the hold stays authorized until it expires. */
+async function releaseLiveHolds(data: Data): Promise<Data> {
+  let reservations = data.reservations;
+  const now = Date.now();
+  for (const stay of data.reservations) {
+    const deposit = normalizeDeposit(stay.deposit, data.config.depositAmount, stay.status);
+    if (deposit.mode !== "live" || deposit.status !== "authorized" || !deposit.authId) continue;
+    const openClaim = (data.claims || []).some((claim) => claim.reservationId === stay.id && claim.status === "pending_owner");
+    if (openClaim) continue;
+    const due = Boolean(deposit.releaseDueAt) && Date.parse(deposit.releaseDueAt) <= now;
+    if (!due && stay.status !== "cancelled") continue;
+    const voided = await helcimVoid(deposit.authId, `void-${stay.id}-${deposit.authId}`);
+    if (!voided.ok) continue;
+    reservations = reservations.map((item) => (item.id === stay.id ? { ...item, deposit: markReleased(deposit) } : item));
+  }
+  return reservations === data.reservations ? data : { ...data, reservations };
+}
+
 export async function loadSnapshot() {
+  await persistSweep();
   const { data, actor, view, session } = await actorContext();
   const shown = present(data, session && actor && view ? { personId: actor.id, viewId: view.id } : null);
   return { ready: true, data: shown.data, me: shown.me, actorRole: shown.actorRole, today: laToday() };
@@ -326,6 +411,7 @@ export async function book(input: { checkIn: string; nights: 1 | 2 | 3; adults: 
       tip: "unset",
       entitlementConsumed: priced.usesBenefit,
       complimentaryApplied: priced.complimentaryNights,
+      deposit: blankDeposit(data.config.depositAmount, data.config.paymentMode === "live" ? "live" : "test"),
     };
     const people = data.people.map((p) => {
       if (p.id !== profile.id) return p;
@@ -405,6 +491,17 @@ export async function cancelStay(id: string) {
   const { actor, view } = await actorContext();
   if (!actor || !view) return { error: "We couldn't find that stay." };
   const privileged = actor.role === "owner" || actor.role === "admin";
+  const existing = (await readState()).reservations.find((stay) => stay.id === id);
+  if (existing?.deposit?.mode === "live" && helcimConfigured()) {
+    if (existing.deposit.authId && existing.deposit.status === "authorized") {
+      const voided = await helcimVoid(existing.deposit.authId, `void-${existing.id}-${existing.deposit.authId}`);
+      if (!voided.ok) return { error: "The security hold could not be released yet. The stay was not cancelled." };
+    }
+    if (existing.payment === "paid" && existing.deposit.chargeId) {
+      const refunded = await helcimRefund(existing.deposit.chargeId, existing.amount, `refund-${existing.id}-${existing.deposit.chargeId}`);
+      if (!refunded.ok) return { error: "The stay charge could not be refunded yet. The stay was not cancelled." };
+    }
+  }
   const saved = await mutate((data) => {
     const stay = data.reservations.find((x) => x.id === id);
     if (!stay) return { error: "We couldn't find that stay." };
@@ -422,9 +519,17 @@ export async function cancelStay(id: string) {
       {
         ...data,
         people,
-        reservations: data.reservations.map((x) =>
-          x.id === id ? { ...x, status: "cancelled" as const, entitlementConsumed: late ? true : false } : x,
-        ),
+        reservations: data.reservations.map((x) => {
+          if (x.id !== id) return x;
+          const deposit = normalizeDeposit(x.deposit, data.config.depositAmount, x.status);
+          return {
+            ...x,
+            status: "cancelled" as const,
+            payment: x.payment === "paid" ? ("refunded" as const) : x.payment,
+            entitlementConsumed: late ? true : false,
+            deposit: deposit.status === "authorized" || deposit.status === "verified" ? markReleased(deposit) : deposit,
+          };
+        }),
       },
       actor.name,
       late ? "Cancelled inside 48 hours. The complimentary night stays used." : "Cancelled a stay.",
@@ -526,7 +631,7 @@ export async function toggleCheck(jobId: string, step: string) {
   return { data: present(saved.data, { personId: ctx.actor.id, viewId: ctx.view.id }).data };
 }
 
-export async function finishCleaning(jobId: string, notes: string) {
+export async function finishCleaning(jobId: string, notes: string, issue?: { amount: number; reason: string; evidence?: string }) {
   const ctx = await requireCleaner();
   if (!ctx?.actor || !ctx.view) return { error: "Cleaning card not found." };
   const today = laToday();
@@ -537,14 +642,152 @@ export async function finishCleaning(jobId: string, notes: string) {
     const stay = data.reservations.find((r) => r.id === job.reservationId);
     const who = stay ? data.people.find((p) => p.id === stay.managerId)?.name : "guest";
     const when = new Date().toISOString();
+    const problem = issue && issue.amount > 0 && issue.reason.trim();
+    const claims = problem && stay
+      ? [{
+          id: uid("claim"),
+          reservationId: stay.id,
+          amount: Math.min(issue.amount, normalizeDeposit(stay.deposit, data.config.depositAmount, stay.status).amount),
+          reason: issue.reason.trim(),
+          evidence: issue.evidence?.startsWith("data:image/") ? issue.evidence : "",
+          status: "pending_owner" as const,
+          createdAt: when,
+          decidedAt: "",
+        }, ...(data.claims || [])]
+      : data.claims || [];
     return audit({
       ...data,
+      claims,
       jobs: data.jobs.map((j) => j.id === jobId ? { ...j, status: "complete" as const, notes, completedAt: when } : j),
       expenses: [{ id: uid("exp"), date: today, kind: "cleaning" as const, label: `Turnover cleaning — ${who}`, amount: data.config.cleaningCost }, ...data.expenses],
-    }, ctx.actor!.name, "Marked the yacht ready after cleaning.");
+      reservations: data.reservations.map((item) => {
+        if (!stay || item.id !== stay.id || problem) return item;
+        return { ...item, deposit: scheduleRelease(normalizeDeposit(item.deposit, data.config.depositAmount, item.status), data.config.depositReleaseHours) };
+      }),
+      sms: problem ? [{
+        id: uid("sms"),
+        at: when,
+        to: "Owner",
+        body: `DEPOSIT REVIEW\nMaria recorded an issue after ${who}'s stay. Nothing is captured until you approve it.`,
+      }, ...data.sms] : data.sms,
+    }, ctx.actor!.name, problem ? "Finished cleaning and asked the owner to review a deposit charge." : "Marked the yacht ready after cleaning. The security hold is scheduled for release.");
   });
   if ("error" in saved) return { error: saved.error };
-  return { error: null, data: present(saved.data, { personId: ctx.actor.id, viewId: ctx.view.id }).data };
+  await persistSweep();
+  return { error: null, data: present((await readState()), { personId: ctx.actor.id, viewId: ctx.view.id }).data };
+}
+
+export async function verifyCard(input: { id: string; cardToken?: string; last4?: string; transactionId?: string }) {
+  const { actor, view } = await actorContext();
+  const me = actingGuest(actor, view);
+  if (!me || !actor || !view) return { ok: false as const, error: "We couldn't find that stay." };
+  if (input.cardToken && /\d{13,19}/.test(input.cardToken.replace(/\s/g, ""))) {
+    return { ok: false as const, error: "Card numbers are not accepted. Use the secure card form." };
+  }
+  const current = await readState();
+  const stay = current.reservations.find((item) => item.id === input.id && item.managerId === me.id);
+  if (!stay || (stay.status !== "confirmed" && stay.status !== "pending_approval")) {
+    return { ok: false as const, error: "This stay is not open for a card." };
+  }
+  const deposit = normalizeDeposit(stay.deposit, current.config.depositAmount, stay.status);
+  if (deposit.status === "authorized" || deposit.status === "verified") {
+    const snap = present(current, { personId: actor.id, viewId: view.id });
+    return { ok: true as const, data: snap.data, me: snap.me };
+  }
+  if (current.config.paymentMode === "live") {
+    if (!helcimConfigured() || !input.cardToken) {
+      return { ok: false as const, error: "Helcim is not connected yet. No card was saved and nothing was charged." };
+    }
+    let chargeId = "";
+    if (stay.amount > 0 && stay.payment !== "paid") {
+      const purchased = await helcimPurchase(stay.amount, input.cardToken, `purchase-${stay.id}`, "0.0.0.0");
+      if (!purchased.ok) return { ok: false as const, error: "The stay charge did not go through. The reservation is not confirmed." };
+      chargeId = purchased.transactionId;
+    }
+    const saved = await mutate((data) => {
+      const reservations = data.reservations.map((item) => {
+        if (item.id !== stay.id) return item;
+        const next = markVerified(normalizeDeposit(item.deposit, data.config.depositAmount, item.status), input.cardToken || "", (input.last4 || "").slice(-4), input.transactionId || chargeId);
+        next.chargeId = chargeId || next.chargeId;
+        next.mode = "live";
+        const due = holdIsDue({ ...item, deposit: next }, next, data.config.depositLeadHours);
+        return {
+          ...item,
+          payment: item.amount > 0 ? ("paid" as const) : item.payment,
+          status: "confirmed" as const,
+          deposit: due ? next : next,
+        };
+      });
+      return audit({ ...data, reservations }, me.name, "Verified a card with Helcim. The security hold is separate from the stay.");
+    });
+    if ("error" in saved) return { ok: false as const, error: saved.error };
+    await persistSweep();
+    const snap = present(await readState(), { personId: actor.id, viewId: view.id });
+    return { ok: true as const, data: snap.data, me: snap.me };
+  }
+  const saved = await mutate((data) => {
+    const reservations = data.reservations.map((item) => {
+      if (item.id !== stay.id) return item;
+      let next = markVerified(normalizeDeposit(item.deposit, data.config.depositAmount, item.status), `test-token-${item.id}`, "4242", `test-verify-${item.id}`);
+      if (holdIsDue(item, next, data.config.depositLeadHours)) next = markAuthorized(next, `test-auth-${item.id}`);
+      return { ...item, deposit: next };
+    });
+    return audit({ ...data, reservations }, me.name, "Verified a test card. No bank charge or hold was sent.");
+  });
+  if ("error" in saved) return { ok: false as const, error: saved.error };
+  const snap = present(saved.data, { personId: actor.id, viewId: view.id });
+  return { ok: true as const, data: snap.data, me: snap.me };
+}
+
+export async function decideClaim(id: string, approve: boolean) {
+  const { actor, view } = await actorContext();
+  if (!requireOwner(actor) || !view || !actor) return { error: "This invitation can't do that." };
+  const current = await readState();
+  const claim = (current.claims || []).find((item) => item.id === id);
+  if (!claim || claim.status !== "pending_owner") return { error: "That deposit review is no longer open." };
+  const stay = current.reservations.find((item) => item.id === claim.reservationId);
+  if (!stay) return { error: "We couldn't find that stay." };
+  const deposit = normalizeDeposit(stay.deposit, current.config.depositAmount, stay.status);
+  if (approve) {
+    if (!arrivalUnlocked(deposit) || deposit.status !== "authorized") {
+      return { error: "There is no active security hold to capture. An expired hold is not treated as funds we can take." };
+    }
+    const amount = Math.min(claim.amount, deposit.amount);
+    if (amount <= 0) return { error: "The amount to capture has to be greater than zero." };
+    let captureId = `test-capture-${claim.id}`;
+    let remainder = "The unused amount is not captured.";
+    if (deposit.mode === "live") {
+      if (!helcimConfigured()) return { error: "Helcim is not connected. No deposit funds were captured." };
+      const captured = await helcimCapture(deposit.authId, amount, `capture-${claim.id}`);
+      if (!captured.ok) return { error: "Helcim did not capture the deposit. Nothing was taken." };
+      captureId = captured.transactionId;
+      if (amount < deposit.amount) {
+        const released = await helcimVoid(deposit.authId, `void-rest-${claim.id}`);
+        remainder = released.ok
+          ? "Helcim accepted a reversal of the unused hold."
+          : "Helcim did not reverse the unused amount. It stays unavailable to us and expires with the authorization.";
+      }
+    }
+    const saved = await mutate((data) => audit({
+      ...data,
+      claims: (data.claims || []).map((item) => item.id === id ? { ...item, status: "approved" as const, decidedAt: new Date().toISOString(), amount } : item),
+      reservations: data.reservations.map((item) => item.id === stay.id ? { ...item, deposit: markCaptured(normalizeDeposit(item.deposit, data.config.depositAmount, item.status), amount, captureId) } : item),
+    }, actor.name, `Approved a deposit capture of ${amount}. ${remainder} This is not stay revenue.`));
+    if ("error" in saved) return saved;
+    return { data: present(saved.data, { personId: actor.id, viewId: view.id }).data };
+  }
+  const saved = await mutate((data) => audit({
+    ...data,
+    claims: (data.claims || []).map((item) => item.id === id ? { ...item, status: "declined" as const, decidedAt: new Date().toISOString() } : item),
+    reservations: data.reservations.map((item) => {
+      if (item.id !== stay.id) return item;
+      const currentDeposit = normalizeDeposit(item.deposit, data.config.depositAmount, item.status);
+      return { ...item, deposit: currentDeposit.status === "authorized" ? { ...currentDeposit, releaseDueAt: new Date().toISOString() } : currentDeposit };
+    }),
+  }, actor.name, "Declined a deposit charge. The hold stays scheduled for release."));
+  if ("error" in saved) return saved;
+  await persistSweep();
+  return { data: present(await readState(), { personId: actor.id, viewId: view.id }).data };
 }
 
 export async function reportProblem(input: { severity: Severity; description: string; photo: string | null; reservationId: string | null }) {
@@ -667,7 +910,17 @@ export async function completeExterior(notes: string, cost: number) {
 export async function updateConfig(patch: Partial<Data["config"]>) {
   const { actor, view } = await actorContext();
   if (!requireOwner(actor) || !view) return deny();
-  const saved = await mutate((data) => audit({ ...data, config: { ...data.config, ...patch } }, actor!.name, "Updated yacht settings."));
+  const cleaned = { ...patch };
+  delete (cleaned as { apiKey?: unknown }).apiKey;
+  delete (cleaned as { token?: unknown }).token;
+  delete (cleaned as { secret?: unknown }).secret;
+  if (cleaned.paymentMode === "live" && !helcimConfigured()) {
+    return { error: "Live charging stays off until the Helcim API token is set on the server." };
+  }
+  const saved = await mutate((data) => audit({
+    ...data,
+    config: normalizePaymentConfig({ ...data.config, ...cleaned, paymentProvider: "helcim" }),
+  }, actor!.name, "Updated yacht settings."));
   if ("error" in saved) return saved;
   return { data: present(saved.data, { personId: actor!.id, viewId: view.id }).data };
 }
