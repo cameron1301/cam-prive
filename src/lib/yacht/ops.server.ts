@@ -27,6 +27,7 @@ import {
   holdIsDue,
   markAuthorized,
   markCaptured,
+  markExpired,
   markFailed,
   markReleased,
   markVerified,
@@ -35,7 +36,17 @@ import {
   publicDeposit,
   scheduleRelease,
 } from "./payments";
-import { helcimCapture, helcimConfigured, helcimPreauth, helcimPurchase, helcimRefund, helcimVoid } from "./helcim.server";
+import {
+  stripeAttachPaymentMethod,
+  stripeCancel,
+  stripeCapture,
+  stripeConfigured,
+  stripeCreateCustomer,
+  stripePreauth,
+  stripePurchase,
+  stripeRefund,
+  stripeRetrieve,
+} from "./stripe.server";
 
 const COOKIE = "cam_prive_session";
 
@@ -295,7 +306,7 @@ async function persistSweep() {
   const current = await readState();
   const swept = applySweep(current, Date.now());
   let next = swept.data;
-  if (next.config.paymentMode === "live" && helcimConfigured()) {
+  if (next.config.paymentMode === "live" && stripeConfigured()) {
     next = await placeLiveHolds(next);
     next = await releaseLiveHolds(next);
   }
@@ -310,16 +321,21 @@ async function placeLiveHolds(data: Data): Promise<Data> {
   for (const stay of data.reservations) {
     const deposit = normalizeDeposit(stay.deposit, data.config.depositAmount, stay.status);
     if (!holdIsDue(stay, deposit, data.config.depositLeadHours) || deposit.mode !== "live") continue;
-    const result = await helcimPreauth(deposit.amount, deposit.tokenRef, `preauth-${stay.id}-${deposit.verifyId}`, "0.0.0.0");
+    const customerId = deposit.verifyId.startsWith("cus_") ? deposit.verifyId : "";
+    if (!customerId || !deposit.tokenRef.startsWith("pm_")) {
+      reservations = reservations.map((item) => (item.id === stay.id ? { ...item, deposit: markFailed(deposit) } : item));
+      continue;
+    }
+    const result = await stripePreauth(deposit.amount, deposit.tokenRef, customerId, `preauth-${stay.id}-${deposit.verifyId}`);
     reservations = reservations.map((item) => {
       if (item.id !== stay.id) return item;
-      return { ...item, deposit: result.ok ? markAuthorized(deposit, result.transactionId) : markFailed(deposit) };
+      return { ...item, deposit: result.ok && result.status === "requires_capture" ? markAuthorized(deposit, result.id) : markFailed(deposit) };
     });
   }
   return reservations === data.reservations ? data : { ...data, reservations };
 }
 
-/** Ask Helcim to reverse a hold that is due. If Helcim refuses, the hold stays authorized until it expires. */
+/** Ask Stripe to cancel a hold that is due. Canceling an uncaptured payment releases it. If Stripe refuses, the hold stays authorized until it expires. */
 async function releaseLiveHolds(data: Data): Promise<Data> {
   let reservations = data.reservations;
   const now = Date.now();
@@ -330,9 +346,14 @@ async function releaseLiveHolds(data: Data): Promise<Data> {
     if (openClaim) continue;
     const due = Boolean(deposit.releaseDueAt) && Date.parse(deposit.releaseDueAt) <= now;
     if (!due && stay.status !== "cancelled") continue;
-    const voided = await helcimVoid(deposit.authId, `void-${stay.id}-${deposit.authId}`);
-    if (!voided.ok) continue;
-    reservations = reservations.map((item) => (item.id === stay.id ? { ...item, deposit: markReleased(deposit) } : item));
+    const canceled = await stripeCancel(deposit.authId, `cancel-${stay.id}-${deposit.authId}`);
+    let next = canceled.ok && canceled.status === "canceled" ? markReleased(deposit) : null;
+    if (!next) {
+      const looked = await stripeRetrieve(deposit.authId);
+      if (looked.ok && looked.status === "canceled") next = markReleased(deposit);
+    }
+    if (!next) continue;
+    reservations = reservations.map((item) => (item.id === stay.id ? { ...item, deposit: next } : item));
   }
   return reservations === data.reservations ? data : { ...data, reservations };
 }
@@ -492,13 +513,13 @@ export async function cancelStay(id: string) {
   if (!actor || !view) return { error: "We couldn't find that stay." };
   const privileged = actor.role === "owner" || actor.role === "admin";
   const existing = (await readState()).reservations.find((stay) => stay.id === id);
-  if (existing?.deposit?.mode === "live" && helcimConfigured()) {
+  if (existing?.deposit?.mode === "live" && stripeConfigured()) {
     if (existing.deposit.authId && existing.deposit.status === "authorized") {
-      const voided = await helcimVoid(existing.deposit.authId, `void-${existing.id}-${existing.deposit.authId}`);
+      const voided = await stripeCancel(existing.deposit.authId, `cancel-${existing.id}-${existing.deposit.authId}`);
       if (!voided.ok) return { error: "The security hold could not be released yet. The stay was not cancelled." };
     }
     if (existing.payment === "paid" && existing.deposit.chargeId) {
-      const refunded = await helcimRefund(existing.deposit.chargeId, existing.amount, `refund-${existing.id}-${existing.deposit.chargeId}`);
+      const refunded = await stripeRefund(existing.deposit.chargeId, existing.amount, `refund-${existing.id}-${existing.deposit.chargeId}`);
       if (!refunded.ok) return { error: "The stay charge could not be refunded yet. The stay was not cancelled." };
     }
   }
@@ -695,30 +716,42 @@ export async function verifyCard(input: { id: string; cardToken?: string; last4?
     return { ok: true as const, data: snap.data, me: snap.me };
   }
   if (current.config.paymentMode === "live") {
-    if (!helcimConfigured() || !input.cardToken) {
-      return { ok: false as const, error: "Helcim is not connected yet. No card was saved and nothing was charged." };
+    if (!stripeConfigured() || !input.cardToken?.startsWith("pm_")) {
+      return { ok: false as const, error: "Stripe is not connected yet. No card was saved and nothing was charged." };
+    }
+    const customer = await stripeCreateCustomer(me.name, `customer-${stay.id}`);
+    if (!customer.ok) return { ok: false as const, error: "The card could not be saved. Nothing was charged." };
+    const attached = await stripeAttachPaymentMethod(input.cardToken, customer.id, `attach-${stay.id}`);
+    if (!attached.ok && attached.code !== "resource_already_exists") {
+      return { ok: false as const, error: "The card could not be saved. Nothing was charged." };
     }
     let chargeId = "";
     if (stay.amount > 0 && stay.payment !== "paid") {
-      const purchased = await helcimPurchase(stay.amount, input.cardToken, `purchase-${stay.id}`, "0.0.0.0");
-      if (!purchased.ok) return { ok: false as const, error: "The stay charge did not go through. The reservation is not confirmed." };
-      chargeId = purchased.transactionId;
+      const purchased = await stripePurchase(stay.amount, input.cardToken, customer.id, `purchase-${stay.id}`);
+      if (!purchased.ok || purchased.status !== "succeeded") {
+        return { ok: false as const, error: "The stay charge did not go through. The reservation is not confirmed." };
+      }
+      chargeId = purchased.id;
     }
     const saved = await mutate((data) => {
       const reservations = data.reservations.map((item) => {
         if (item.id !== stay.id) return item;
-        const next = markVerified(normalizeDeposit(item.deposit, data.config.depositAmount, item.status), input.cardToken || "", (input.last4 || "").slice(-4), input.transactionId || chargeId);
+        const next = markVerified(
+          normalizeDeposit(item.deposit, data.config.depositAmount, item.status),
+          input.cardToken || "",
+          (input.last4 || "").slice(-4),
+          customer.id,
+        );
         next.chargeId = chargeId || next.chargeId;
         next.mode = "live";
-        const due = holdIsDue({ ...item, deposit: next }, next, data.config.depositLeadHours);
         return {
           ...item,
-          payment: item.amount > 0 ? ("paid" as const) : item.payment,
-          status: "confirmed" as const,
-          deposit: due ? next : next,
+          payment: chargeId ? ("paid" as const) : item.payment,
+          status: item.amount > 0 && !chargeId ? item.status : ("confirmed" as const),
+          deposit: next,
         };
       });
-      return audit({ ...data, reservations }, me.name, "Verified a card with Helcim. The security hold is separate from the stay.");
+      return audit({ ...data, reservations }, me.name, "Verified a card with Stripe. The security hold is separate from the stay.");
     });
     if ("error" in saved) return { ok: false as const, error: saved.error };
     await persistSweep();
@@ -757,16 +790,25 @@ export async function decideClaim(id: string, approve: boolean) {
     let captureId = `test-capture-${claim.id}`;
     let remainder = "The unused amount is not captured.";
     if (deposit.mode === "live") {
-      if (!helcimConfigured()) return { error: "Helcim is not connected. No deposit funds were captured." };
-      const captured = await helcimCapture(deposit.authId, amount, `capture-${claim.id}`);
-      if (!captured.ok) return { error: "Helcim did not capture the deposit. Nothing was taken." };
-      captureId = captured.transactionId;
-      if (amount < deposit.amount) {
-        const released = await helcimVoid(deposit.authId, `void-rest-${claim.id}`);
-        remainder = released.ok
-          ? "Helcim accepted a reversal of the unused hold."
-          : "Helcim did not reverse the unused amount. It stays unavailable to us and expires with the authorization.";
+      if (!stripeConfigured()) return { error: "Stripe is not connected. No deposit funds were captured." };
+      const intent = await stripeRetrieve(deposit.authId);
+      if (!intent.ok || intent.status !== "requires_capture") {
+        if (intent.ok && intent.status === "canceled") {
+          await mutate((data) => ({
+            ...data,
+            reservations: data.reservations.map((item) =>
+              item.id === stay.id ? { ...item, deposit: markExpired(normalizeDeposit(item.deposit, data.config.depositAmount, item.status)) } : item,
+            ),
+          }));
+        }
+        return { error: "There is no active security hold to capture. An expired hold is not treated as funds we can take." };
       }
+      const captured = await stripeCapture(deposit.authId, amount, `capture-${claim.id}`);
+      if (!captured.ok || captured.status !== "succeeded") return { error: "Stripe did not capture the deposit. Nothing was taken." };
+      captureId = captured.id;
+      remainder = amount < deposit.amount
+        ? "Stripe releases the unused authorization when the smaller amount is captured."
+        : "The approved amount was captured.";
     }
     const saved = await mutate((data) => audit({
       ...data,
@@ -914,12 +956,13 @@ export async function updateConfig(patch: Partial<Data["config"]>) {
   delete (cleaned as { apiKey?: unknown }).apiKey;
   delete (cleaned as { token?: unknown }).token;
   delete (cleaned as { secret?: unknown }).secret;
-  if (cleaned.paymentMode === "live" && !helcimConfigured()) {
-    return { error: "Live charging stays off until the Helcim API token is set on the server." };
+  delete (cleaned as { secretKey?: unknown }).secretKey;
+  if (cleaned.paymentMode === "live" && !stripeConfigured()) {
+    return { error: "Live charging stays off until the Stripe secret key is set on the server." };
   }
   const saved = await mutate((data) => audit({
     ...data,
-    config: normalizePaymentConfig({ ...data.config, ...cleaned, paymentProvider: "helcim" }),
+    config: normalizePaymentConfig({ ...data.config, ...cleaned, paymentProvider: "stripe" }),
   }, actor!.name, "Updated yacht settings."));
   if ("error" in saved) return saved;
   return { data: present(saved.data, { personId: actor!.id, viewId: view.id }).data };

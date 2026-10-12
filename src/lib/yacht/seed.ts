@@ -277,7 +277,7 @@ export function createSeed(today = laToday()): Data {
       depositAmount: 250,
       depositLeadHours: 24,
       depositReleaseHours: 24,
-      paymentProvider: "helcim",
+      paymentProvider: "stripe",
       paymentMode: "test",
       acceptedMethods: "Credit and debit cards",
     },

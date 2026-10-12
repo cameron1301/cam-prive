@@ -685,7 +685,7 @@ export function SettingsScreen() {
         {field("cleaningCost", "Cleaning cost")}
         {field("slipMonthly", "Monthly slip fee")}
         <p className="text-sm text-muted">
-          Processor: Helcim, test mode. Live charging stays off until a Helcim API token is set on the server. The token is never stored in CAM Privé and never shown here. Card numbers are not collected in this app.
+          Processor: Stripe, test mode. Live charging stays off until a Stripe secret key is set on the server. The key is never stored in CAM Privé and never shown here. Card numbers are not collected in this app. The security hold is an uncaptured authorization, not a charge.
         </p>
       </form>
       <form className="card space-y-4 p-5" onSubmit={(e) => e.preventDefault()}>

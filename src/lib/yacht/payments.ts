@@ -1,7 +1,7 @@
 import type { Config, Data, PayStatus, Reservation, ReservationStatus } from "./logic";
 import { hoursUntilCheckIn, zoned } from "./logic";
 
-/** Helcim pre-authorizations expire after 7 days. Never treat an older hold as valid. */
+/** Stripe cancels an uncaptured PaymentIntent after 7 days. Never treat an older hold as valid. */
 export const AUTH_HOLD_MS = 7 * 24 * 60 * 60 * 1000;
 
 export const HOUSE_RULES = [
@@ -61,7 +61,7 @@ export function defaultPaymentConfig(): Pick<
     depositAmount: 250,
     depositLeadHours: 24,
     depositReleaseHours: 24,
-    paymentProvider: "helcim",
+    paymentProvider: "stripe",
     paymentMode: "test",
     acceptedMethods: "Credit and debit cards",
   };
@@ -121,13 +121,13 @@ export function normalizePaymentConfig(config: Config): Config {
     depositAmount: amount > 0 ? amount : defaults.depositAmount,
     depositLeadHours: lead >= 1 && lead <= 72 ? lead : defaults.depositLeadHours,
     depositReleaseHours: release >= 1 && release <= 72 ? release : defaults.depositReleaseHours,
-    paymentProvider: "helcim",
+    paymentProvider: "stripe",
     paymentMode: config.paymentMode === "live" ? "live" : "test",
     acceptedMethods: config.acceptedMethods?.trim() || defaults.acceptedMethods,
   };
 }
 
-/** A hold only unlocks arrival details while it is still inside Helcim's 7-day window, or after it was released or partly captured. */
+/** A hold only unlocks arrival details while it is still inside Stripe's 7-day window, or after it was released or partly captured. */
 export function arrivalUnlocked(deposit: Deposit, now = Date.now()): boolean {
   if (deposit.status === "authorized") {
     const exp = Date.parse(deposit.expiresAt);
@@ -167,15 +167,10 @@ export function quoteStay(stayAmount: number, payment: PayStatus, deposit: Depos
   };
 }
 
-/**
- * Helcim's published online rate at the entry tier is interchange + 0.50% + $0.25.
- * The commonly cited average effective online rate is about 2.49% + $0.25.
- * Interchange varies by card, so this is an estimate, not a quote from Helcim.
- */
-export function estimateHelcimOnlineFee(amount: number): { average: number; marginOnly: number } {
-  const average = Math.round((amount * 0.0249 + 0.25) * 100) / 100;
-  const marginOnly = Math.round((amount * 0.005 + 0.25) * 100) / 100;
-  return { average, marginOnly };
+/** Stripe's published US online card rate: 2.9% + $0.30 on a successful charge. A released authorization is not a charge. */
+export function estimateStripeOnlineFee(amount: number): number {
+  if (amount <= 0) return 0;
+  return Math.round((amount * 0.029 + 0.3) * 100) / 100;
 }
 
 export function markVerified(deposit: Deposit, tokenRef: string, last4: string, verifyId: string, now = new Date()): Deposit {

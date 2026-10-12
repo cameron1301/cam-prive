@@ -5,7 +5,7 @@ import {
   applySweep,
   arrivalUnlocked,
   blankDeposit,
-  estimateHelcimOnlineFee,
+  estimateStripeOnlineFee,
   holdIsDue,
   markAuthorized,
   markCaptured,
@@ -35,10 +35,9 @@ function stay(partial: Partial<Reservation> & Pick<Reservation, "id" | "checkIn"
   };
 }
 
-test("an $89 Helcim estimate matches the published average, and the margin is separate", () => {
-  const fee = estimateHelcimOnlineFee(89);
-  assert.equal(fee.average, 2.47);
-  assert.equal(fee.marginOnly, 0.7);
+test("an $89 stay uses Stripe's published US card rate, and a free stay has no fee", () => {
+  assert.equal(estimateStripeOnlineFee(89), 2.88);
+  assert.equal(estimateStripeOnlineFee(0), 0);
 });
 
 test("a complimentary stay quotes no charge today and a separate $250 hold", () => {

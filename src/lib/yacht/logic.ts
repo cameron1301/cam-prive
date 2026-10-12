@@ -222,7 +222,7 @@ export type Config = {
   depositAmount: number;
   depositLeadHours: number;
   depositReleaseHours: number;
-  paymentProvider: "helcim";
+  paymentProvider: "stripe";
   paymentMode: "test" | "live";
   acceptedMethods: string;
 };
