@@ -50,11 +50,13 @@ function AccessGate() {
           className="mt-8"
           onSubmit={(e) => {
             e.preventDefault();
-            if (!openInvitation(code)) {
-              setError("That code isn't recognized. Please check the invitation and try again.");
-              return;
-            }
-            setError(null);
+            void openInvitation(code).then((dest) => {
+              if (!dest) {
+                setError("That code isn't recognized. Please check the invitation and try again.");
+                return;
+              }
+              setError(null);
+            });
           }}
         >
           <label className="block text-[13px] text-[#6d6a64]">
@@ -382,7 +384,7 @@ export function StayScreen() {
                   title={tab === "past" ? "No past stays" : "No upcoming stays"}
                   body="When you're ready for your next escape, we'll be here."
                 />
-                <img src="/yacht/hero-frame.jpg?v=2" alt="The Bay Escape" className="mt-8 aspect-[16/10] w-full object-cover" />
+                <img src="/yacht/hero-frame.jpg?v=3" alt="The Bay Escape" className="mt-8 aspect-[16/10] w-full object-cover" />
                 <Link to="/book" className={`${btn} mt-8`}>Check availability</Link>
               </div>
             ) : welcome && tab === "upcoming" && visible.status !== "checked_out" ? (
@@ -613,7 +615,7 @@ function StayHub({
       <div className="lg:grid lg:grid-cols-12 lg:items-start lg:gap-14">
         <div className="lg:col-span-5 lg:sticky lg:top-6">
           <p className="text-[11px] font-semibold tracking-[0.14em] text-[#6d6a64] uppercase">My Stay</p>
-          <img src="/yacht/hero-frame.jpg?v=2" alt="The Bay Escape at Sierra Point Harbor" className="mt-4 aspect-[16/10] w-full object-cover" />
+          <img src="/yacht/hero-frame.jpg?v=3" alt="The Bay Escape at Sierra Point Harbor" className="mt-4 aspect-[16/10] w-full object-cover" />
           <div className="mt-4 flex items-baseline justify-between gap-4 border-b border-[#ded9d0] pb-3">
             <p className="text-[14px] text-[#6d6a64]">Reservation</p>
             <p className="text-[16px] font-semibold tracking-wide">{refCode(stay.id)}</p>
@@ -983,7 +985,7 @@ export function ExploreScreen() {
     <GuestLayout>
       <article className="mx-auto max-w-3xl px-5 py-14 lg:px-8 lg:py-20">
         <PageIntro kicker="The Bay Escape" title="Getting here" body="Sierra Point Harbor, Brisbane. The yacht stays at her slip for the whole of your visit." />
-        <img src="/yacht/approved/04_EXTERIOR_GALLERY_APPROVED.png" alt="The yacht at Sierra Point Harbor" className="mt-8 aspect-[16/10] w-full object-cover" />
+        <img src="/yacht/approved/04_EXTERIOR_GALLERY_APPROVED.png?v=3" alt="The yacht at Sierra Point Harbor" className="mt-8 aspect-[16/10] w-full object-cover" />
         <dl className="mt-10">
           {rows.map(([k, v]) => (
             <div key={k} className="grid gap-1 border-t border-[#ded9d0] py-4 sm:grid-cols-[180px_1fr] sm:gap-6">

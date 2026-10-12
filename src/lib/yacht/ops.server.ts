@@ -46,7 +46,28 @@ async function readState(): Promise<Data> {
     await sql.query("insert into cam_state (id, data) values (1, $1::jsonb)", [JSON.stringify(fresh)]);
     return fresh;
   }
-  return parseData(rows[0].data);
+  const parsed = parseData(rows[0].data);
+  const repaired = repairWalkthrough(parsed);
+  if (!repaired) return parsed;
+  const saved = await writeState(repaired, versionOf(parsed));
+  return saved ? repaired : parsed;
+}
+
+/** The original walkthrough used a paid stay as if money had been collected. Correct that once. */
+function repairWalkthrough(data: Data): Data | null {
+  let changed = false;
+  const reservations = data.reservations.map((stay) => {
+    if (stay.id === "stay-jordan" && stay.status === "confirmed" && stay.payment === "pending") {
+      changed = true;
+      return { ...stay, status: "cancelled" as const, payment: "not_required" as const, amount: 0 };
+    }
+    if (stay.id === "stay-priya" && stay.payment === "paid") {
+      changed = true;
+      return { ...stay, payment: "not_required" as const, amount: 0, kind: "complimentary" as const };
+    }
+    return stay;
+  });
+  return changed ? { ...data, reservations } : null;
 }
 
 async function writeState(next: Data, previousVersion: number) {
@@ -206,7 +227,7 @@ export function present(data: Data, session: Session | null) {
       sms: [],
       maintenance: [],
       blackouts: data.blackouts.map((b) => ({ ...b, reason: "Held" })),
-      config: data.config,
+      config: { ...data.config, zelle: "", cleaningCost: 0, slipMonthly: 0 },
     },
     me: actor,
     actorRole,
@@ -422,9 +443,11 @@ export async function submitCheckout(id: string, input: { notes: string; damage:
   if (missing.length) return { error: "Please add the interior, cockpit, and exterior photos before you leave." };
   const { actor, view } = await actorContext();
   if (!actor || !view) return { error: "This stay is not ready for checkout." };
+  const today = laToday();
   const saved = await mutate((data) => {
     const stay = data.reservations.find((x) => x.id === id);
     if (!stay || stay.managerId !== actor.id || stay.status !== "confirmed") return { error: "This stay is not ready for checkout." };
+    if (today < stay.checkIn) return { error: "Checkout opens on the day you arrive." };
     const when = new Date().toISOString();
     const job = {
       id: uid("job"),
@@ -437,6 +460,12 @@ export async function submitCheckout(id: string, input: { notes: string; damage:
       startedAt: null,
       completedAt: null,
     };
+    const cleaningNote = {
+      id: uid("sms"),
+      at: when,
+      to: "Maria",
+      body: "CLEANING REQUIRED\nA guest has checked out at Dock 5, Slip 36. Please clean the cabin and wash the command bridge before the next arrival.",
+    };
     return audit(
       {
         ...data,
@@ -444,6 +473,7 @@ export async function submitCheckout(id: string, input: { notes: string; damage:
           x.id === id ? { ...x, status: "checked_out" as const, checkout: { at: when, notes: input.notes, damage: input.damage, photos: input.photos } } : x,
         ),
         jobs: [job, ...data.jobs],
+        sms: [cleaningNote, ...data.sms],
         incidents: input.damage.trim()
           ? [{
               id: uid("inc"),

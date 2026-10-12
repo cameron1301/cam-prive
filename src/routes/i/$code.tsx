@@ -16,9 +16,9 @@ function InviteOpen() {
   useEffect(() => {
     if (!ready) return;
     let live = true;
-    void openInvitation(code).then((ok) => {
+    void openInvitation(code).then((dest) => {
       if (!live) return;
-      if (ok) navigate({ to: "/profile", replace: true });
+      if (dest) navigate({ to: dest, replace: true });
       else setMissing(true);
     });
     return () => {

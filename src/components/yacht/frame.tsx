@@ -72,6 +72,7 @@ export function Frame({ children }: { children: ReactNode }) {
             </nav>
           ) : null}
           <div className="flex items-center gap-3">
+            {owner ? (
             <label className="text-xs text-[#6d6a64]">
               <span className="sr-only">Preview as</span>
               <select
@@ -89,6 +90,7 @@ export function Frame({ children }: { children: ReactNode }) {
                 ))}
               </select>
             </label>
+            ) : null}
           </div>
         </div>
         {owner ? (

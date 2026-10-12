@@ -44,7 +44,7 @@ type Api = {
   today: string;
   me: Person;
   setView: (id: string) => Promise<void>;
-  openInvitation: (code: string) => Promise<boolean>;
+  openInvitation: (code: string) => Promise<"/" | "/profile" | null>;
   book: (input: { checkIn: string; nights: 1 | 2 | 3; adults: number; accepted: boolean }) => Promise<{ ok: true; id: string } | { ok: false; error: string }>;
   changeStay: (input: { id: string; checkIn: string; nights: 1 | 2 | 3; adults: number }) => Promise<{ ok: true } | { ok: false; error: string }>;
   cancelStay: (id: string) => Promise<string>;
@@ -153,9 +153,11 @@ export function YachtProvider({ children }: { children: ReactNode }) {
       },
       openInvitation: async (code) => {
         const snap = await openInvite({ data: code });
-        if (!snap.ok) return false;
+        if (!snap.ok) return null;
         take(snap);
-        return true;
+        const role = snap.me?.role;
+        if (role === "cleaner" || role === "owner" || role === "admin") return "/";
+        return "/profile";
       },
       book: async (input) => {
         const result = await bookStay({ data: input });
